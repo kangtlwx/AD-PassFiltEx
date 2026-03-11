@@ -82,6 +82,27 @@ cmake --build build --config Release
 
 在 Windows 上会生成：`PassFiltEx.dll`
 
+### Windows 一键构建脚本（推荐）
+
+仓库已提供脚本：`scripts/build-windows.ps1`
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
+```
+
+可选参数：
+
+- `-Configuration Release|Debug`
+- `-Arch x64`（默认）
+- `-SkipTests`（仅构建 DLL，不跑单测）
+
+脚本会自动：
+
+1. 检测 Visual Studio C++ 工具链（通过 `vswhere` + `VsDevCmd.bat`）
+2. 生成并构建工程
+3. 运行 `password_policy_test.exe`（默认）
+4. 校验 `PassFiltEx.dll` 是否生成并输出 SHA256
+
 ### Linux/CI (仅验证策略核心)
 
 ```bash
