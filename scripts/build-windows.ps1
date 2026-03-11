@@ -37,7 +37,7 @@ function Invoke-InVsDevShell {
     $wrapped = "`"$DevCmd`" -arch=$Arch && $Command"
     cmd.exe /c $wrapped
     if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code $LASTEXITCODE: $Command"
+        throw "Command failed with exit code ${LASTEXITCODE}: $Command"
     }
 }
 
