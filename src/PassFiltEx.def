@@ -1,0 +1,5 @@
+LIBRARY PassFiltEx
+EXPORTS
+    InitializeChangeNotify
+    PasswordFilter
+    PasswordChangeNotify
