@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -12,21 +13,7 @@ struct Case {
     const char* name;
 };
 
-int main() {
-    std::vector<Case> cases = {
-        {L"Aa9!xY7#", true, L"", L"", "valid basic"},
-        {L"aa9!xy7#", false, L"", L"", "missing uppercase"},
-        {L"Aa123!Z#", false, L"", L"", "ascending digits"},
-        {L"Aa890!Z#", false, L"", L"", "ascending digits wrap"},
-        {L"Aaabc!9#", false, L"", L"", "ascending letters"},
-        {L"Aa111!Z#", false, L"", L"", "three repeated adjacent"},
-        {L"Aaqgq!9#", false, L"", L"", "repeated aba pattern"},
-        {L"Aa1qaz!9#", false, L"", L"", "vertical keyboard"},
-        {L"AaR00t!9#", false, L"", L"", "dictionary with normalization"},
-        {L"AaSkyBlue!9#", false, L"skyblue", L"", "contains account name"},
-        {L"AaTechLead!9#", false, L"", L"Tech Lead", "contains full name token"}
-    };
-
+bool RunCases(const std::vector<Case>& cases) {
     int failures = 0;
     for (const auto& c : cases) {
         passfiltex::PolicyContext context;
@@ -40,11 +27,37 @@ int main() {
         }
     }
 
-    if (failures == 0) {
-        std::cout << "All password policy tests passed\n";
-        return 0;
+    return failures == 0;
+}
+
+int main() {
+    std::vector<Case> defaultCases = {
+        {L"Aa9!xY7#", true, L"", L"", "valid basic"},
+        {L"aa9!xy7#", false, L"", L"", "missing uppercase"},
+        {L"Aa123!Z#", false, L"", L"", "ascending digits"},
+        {L"Aa890!Z#", false, L"", L"", "ascending digits wrap"},
+        {L"Aaabc!9#", false, L"", L"", "ascending letters"},
+        {L"Aa111!Z#", false, L"", L"", "three repeated adjacent"},
+        {L"Aaqgq!9#", false, L"", L"", "repeated aba pattern"},
+        {L"Aa1qaz!9#", false, L"", L"", "vertical keyboard"},
+        {L"AaR00t!9#", false, L"", L"", "dictionary with normalization"},
+        {L"AaSkyBlue!9#", false, L"skyblue", L"", "contains account name"},
+        {L"AaTechLead!9#", false, L"", L"Tech Lead", "contains full name token"}
+    };
+
+    if (!RunCases(defaultCases)) {
+        return 1;
     }
 
-    std::cerr << failures << " cases failed\n";
-    return 1;
+#ifndef _WIN32
+    setenv("PASSFILTEX_BLOCK_CONSECUTIVE3", "0", 1);
+    Case consecutiveOff{L"Aa123!Z#", true, L"", L"", "consecutive disabled by env"};
+    if (!RunCases({consecutiveOff})) {
+        return 1;
+    }
+    unsetenv("PASSFILTEX_BLOCK_CONSECUTIVE3");
+#endif
+
+    std::cout << "All password policy tests passed\n";
+    return 0;
 }

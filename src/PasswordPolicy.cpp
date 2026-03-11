@@ -18,6 +18,18 @@
 namespace passfiltex {
 namespace {
 
+struct PolicyOptions {
+    bool requireCharClasses = true;
+    bool blockConsecutive3 = true;
+    bool blockRepeated3 = true;
+    bool blockVerticalKeyboard4 = true;
+    bool enableDictionaryCheck = true;
+    bool enableAccountNameCheck = true;
+    bool enableFullNameCheck = true;
+    bool digitWrapSequence = true;
+    std::wstring dictionaryPath;
+};
+
 std::wstring ToLower(const std::wstring& input) {
     std::wstring out = input;
     std::transform(out.begin(), out.end(), out.begin(), [](wchar_t c) {
@@ -44,20 +56,11 @@ std::wstring NormalizeForDictionary(const std::wstring& input) {
     std::wstring lower = ToLower(input);
     for (wchar_t& c : lower) {
         switch (c) {
-            case L'0':
-                c = L'o';
-                break;
-            case L'1':
-                c = L'l';
-                break;
-            case L'$':
-                c = L's';
-                break;
-            case L'@':
-                c = L'a';
-                break;
-            default:
-                break;
+            case L'0': c = L'o'; break;
+            case L'1': c = L'l'; break;
+            case L'$': c = L's'; break;
+            case L'@': c = L'a'; break;
+            default: break;
         }
     }
     return lower;
@@ -92,16 +95,19 @@ bool IsNextLetter(wchar_t a, wchar_t b) {
     return (a >= L'a' && a <= L'z' && b >= L'a' && b <= L'z' && (b == a + 1));
 }
 
-bool IsNextDigitWithWrap(wchar_t a, wchar_t b) {
+bool IsNextDigit(wchar_t a, wchar_t b, bool wrapEnabled) {
     if (!(a >= L'0' && a <= L'9' && b >= L'0' && b <= L'9')) {
         return false;
     }
-    int da = static_cast<int>(a - L'0');
-    int db = static_cast<int>(b - L'0');
-    return ((da + 1) % 10) == db;
+    if (wrapEnabled) {
+        int da = static_cast<int>(a - L'0');
+        int db = static_cast<int>(b - L'0');
+        return ((da + 1) % 10) == db;
+    }
+    return b == a + 1;
 }
 
-bool Has3Consecutive(const std::wstring& password) {
+bool Has3Consecutive(const std::wstring& password, bool digitWrapEnabled) {
     if (password.size() < 3) {
         return false;
     }
@@ -117,7 +123,7 @@ bool Has3Consecutive(const std::wstring& password) {
         }
 
         bool letters = IsNextLetter(c1, c2) && IsNextLetter(c2, c3);
-        bool digits = IsNextDigitWithWrap(c1, c2) && IsNextDigitWithWrap(c2, c3);
+        bool digits = IsNextDigit(c1, c2, digitWrapEnabled) && IsNextDigit(c2, c3, digitWrapEnabled);
         if (letters || digits) {
             return true;
         }
@@ -129,28 +135,17 @@ bool Has3Consecutive(const std::wstring& password) {
 wchar_t NormalizeForRepetition(wchar_t c) {
     c = static_cast<wchar_t>(std::towlower(c));
     switch (c) {
-        case L'!':
-            return L'1';
-        case L'@':
-            return L'2';
-        case L'#':
-            return L'3';
-        case L'$':
-            return L'4';
-        case L'%':
-            return L'5';
-        case L'^':
-            return L'6';
-        case L'&':
-            return L'7';
-        case L'*':
-            return L'8';
-        case L'(':
-            return L'9';
-        case L')':
-            return L'0';
-        default:
-            return c;
+        case L'!': return L'1';
+        case L'@': return L'2';
+        case L'#': return L'3';
+        case L'$': return L'4';
+        case L'%': return L'5';
+        case L'^': return L'6';
+        case L'&': return L'7';
+        case L'*': return L'8';
+        case L'(': return L'9';
+        case L')': return L'0';
+        default: return c;
     }
 }
 
@@ -184,10 +179,8 @@ const std::unordered_map<wchar_t, wchar_t>& KeyboardNormalizeMap() {
     static const std::unordered_map<wchar_t, wchar_t> map = {
         {L'~', L'`'}, {L'!', L'1'}, {L'@', L'2'}, {L'#', L'3'}, {L'$', L'4'},
         {L'%', L'5'}, {L'^', L'6'}, {L'&', L'7'}, {L'*', L'8'}, {L'(', L'9'},
-        {L')', L'0'}, {L'_', L'-'}, {L'+', L'='},
-        {L'{', L'['}, {L'}', L']'}, {L'|', L'\\'},
-        {L':', L';'}, {L'"', L'\''},
-        {L'<', L','}, {L'>', L'.'}, {L'?', L'/'}
+        {L')', L'0'}, {L'_', L'-'}, {L'+', L'='}, {L'{', L'['}, {L'}', L']'},
+        {L'|', L'\\'}, {L':', L';'}, {L'"', L'\''}, {L'<', L','}, {L'>', L'.'}, {L'?', L'/'}
     };
     return map;
 }
@@ -236,27 +229,105 @@ const std::unordered_set<std::wstring>& BuiltinDictionary() {
 }
 
 std::unordered_set<std::wstring> g_dynamicDictionary;
-std::once_flag g_dictionaryInit;
+std::wstring g_loadedDictPath;
+std::mutex g_dictMutex;
 
-void LoadDynamicDictionary() {
-#ifdef _WIN32
-    wchar_t systemRootBuffer[MAX_PATH] = {0};
-    DWORD len = GetEnvironmentVariableW(L"SystemRoot", systemRootBuffer, MAX_PATH);
-    if (len == 0 || len >= MAX_PATH) {
-        return;
+bool ParseBoolEnv(const char* name, bool defaultValue) {
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return defaultValue;
     }
-    std::wstring path = std::wstring(systemRootBuffer) + L"\\System32\\PassFiltExDict.txt";
+    std::string s(value);
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return (s == "1" || s == "true" || s == "yes" || s == "on");
+}
+
+#ifdef _WIN32
+bool ReadRegDword(HKEY root, const wchar_t* subKey, const wchar_t* name, bool defaultValue) {
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    LONG rc = RegGetValueW(root, subKey, name, RRF_RT_REG_DWORD, nullptr, &value, &size);
+    if (rc != ERROR_SUCCESS) {
+        return defaultValue;
+    }
+    return value != 0;
+}
+
+std::wstring ReadRegString(HKEY root, const wchar_t* subKey, const wchar_t* name) {
+    DWORD size = 0;
+    LONG rc = RegGetValueW(root, subKey, name, RRF_RT_REG_SZ, nullptr, nullptr, &size);
+    if (rc != ERROR_SUCCESS || size < sizeof(wchar_t)) {
+        return L"";
+    }
+
+    std::vector<wchar_t> buffer(size / sizeof(wchar_t));
+    rc = RegGetValueW(root, subKey, name, RRF_RT_REG_SZ, nullptr, buffer.data(), &size);
+    if (rc != ERROR_SUCCESS || buffer.empty()) {
+        return L"";
+    }
+
+    return std::wstring(buffer.data());
+}
+#endif
+
+std::wstring DefaultDictionaryPath() {
+#ifdef _WIN32
+    wchar_t systemRoot[MAX_PATH] = {0};
+    DWORD len = GetEnvironmentVariableW(L"SystemRoot", systemRoot, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        return L"";
+    }
+    return std::wstring(systemRoot) + L"\\System32\\PassFiltExDict.txt";
 #else
-    const char* systemRoot = std::getenv("SystemRoot");
-    if (systemRoot == nullptr || systemRoot[0] == '\0') {
-        return;
+    const char* root = std::getenv("SystemRoot");
+    if (root == nullptr || root[0] == '\0') {
+        return L"";
     }
     std::wstring path;
-    for (const char* p = systemRoot; *p != '\0'; ++p) {
+    for (const char* p = root; *p != '\0'; ++p) {
         path.push_back(static_cast<unsigned char>(*p));
     }
     path += L"/System32/PassFiltExDict.txt";
+    return path;
 #endif
+}
+
+PolicyOptions LoadPolicyOptions() {
+    PolicyOptions options;
+#ifdef _WIN32
+    const wchar_t* key = L"SYSTEM\\CurrentControlSet\\Services\\PassFiltEx\\Parameters";
+    options.requireCharClasses = ReadRegDword(HKEY_LOCAL_MACHINE, key, L"RequireCharClasses", true);
+    options.blockConsecutive3 = ReadRegDword(HKEY_LOCAL_MACHINE, key, L"BlockConsecutive3", true);
+    options.blockRepeated3 = ReadRegDword(HKEY_LOCAL_MACHINE, key, L"BlockRepeated3", true);
+    options.blockVerticalKeyboard4 = ReadRegDword(HKEY_LOCAL_MACHINE, key, L"BlockVerticalKeyboard4", true);
+    options.enableDictionaryCheck = ReadRegDword(HKEY_LOCAL_MACHINE, key, L"EnableDictionaryCheck", true);
+    options.enableAccountNameCheck = ReadRegDword(HKEY_LOCAL_MACHINE, key, L"EnableAccountNameCheck", true);
+    options.enableFullNameCheck = ReadRegDword(HKEY_LOCAL_MACHINE, key, L"EnableFullNameCheck", true);
+    options.digitWrapSequence = ReadRegDword(HKEY_LOCAL_MACHINE, key, L"DigitWrapSequence", true);
+    options.dictionaryPath = ReadRegString(HKEY_LOCAL_MACHINE, key, L"DictionaryPath");
+#else
+    options.requireCharClasses = ParseBoolEnv("PASSFILTEX_REQUIRE_CHAR_CLASSES", true);
+    options.blockConsecutive3 = ParseBoolEnv("PASSFILTEX_BLOCK_CONSECUTIVE3", true);
+    options.blockRepeated3 = ParseBoolEnv("PASSFILTEX_BLOCK_REPEATED3", true);
+    options.blockVerticalKeyboard4 = ParseBoolEnv("PASSFILTEX_BLOCK_VERTICAL4", true);
+    options.enableDictionaryCheck = ParseBoolEnv("PASSFILTEX_ENABLE_DICTIONARY", true);
+    options.enableAccountNameCheck = ParseBoolEnv("PASSFILTEX_ENABLE_ACCOUNT_CHECK", true);
+    options.enableFullNameCheck = ParseBoolEnv("PASSFILTEX_ENABLE_FULLNAME_CHECK", true);
+    options.digitWrapSequence = ParseBoolEnv("PASSFILTEX_DIGIT_WRAP_SEQUENCE", true);
+#endif
+
+    if (options.dictionaryPath.empty()) {
+        options.dictionaryPath = DefaultDictionaryPath();
+    }
+
+    return options;
+}
+
+void LoadDynamicDictionary(const std::wstring& path) {
+    g_dynamicDictionary.clear();
+    if (path.empty()) {
+        return;
+    }
 
     std::wifstream dictFile{std::filesystem::path(path)};
     if (!dictFile.is_open()) {
@@ -269,7 +340,6 @@ void LoadDynamicDictionary() {
         if (token.empty() || token[0] == L'#') {
             continue;
         }
-
         std::wstring normalized = NormalizeForDictionary(token);
         if (normalized.size() >= 3) {
             g_dynamicDictionary.insert(normalized);
@@ -277,8 +347,12 @@ void LoadDynamicDictionary() {
     }
 }
 
-const std::unordered_set<std::wstring>& DynamicDictionary() {
-    std::call_once(g_dictionaryInit, LoadDynamicDictionary);
+const std::unordered_set<std::wstring>& DynamicDictionary(const std::wstring& path) {
+    std::lock_guard<std::mutex> lock(g_dictMutex);
+    if (path != g_loadedDictPath) {
+        g_loadedDictPath = path;
+        LoadDynamicDictionary(path);
+    }
     return g_dynamicDictionary;
 }
 
@@ -304,14 +378,14 @@ std::vector<std::wstring> Tokenize(const std::wstring& text) {
     return tokens;
 }
 
-bool ContainsAnyDictionaryTerm(const std::wstring& normalizedPassword) {
+bool ContainsAnyDictionaryTerm(const std::wstring& normalizedPassword, const std::wstring& dictPath) {
     for (const auto& word : BuiltinDictionary()) {
         if (normalizedPassword.find(word) != std::wstring::npos) {
             return true;
         }
     }
 
-    for (const auto& word : DynamicDictionary()) {
+    for (const auto& word : DynamicDictionary(dictPath)) {
         if (normalizedPassword.find(word) != std::wstring::npos) {
             return true;
         }
@@ -320,18 +394,20 @@ bool ContainsAnyDictionaryTerm(const std::wstring& normalizedPassword) {
     return false;
 }
 
-bool ContainsAccountContext(const std::wstring& normalizedPassword, const PolicyContext& context) {
-    if (!context.accountName.empty()) {
+bool ContainsAccountContext(const std::wstring& normalizedPassword, const PolicyContext& context, bool checkAccount, bool checkFullname) {
+    if (checkAccount && !context.accountName.empty()) {
         std::wstring account = NormalizeForDictionary(context.accountName);
         if (account.size() >= 3 && normalizedPassword.find(account) != std::wstring::npos) {
             return true;
         }
     }
 
-    for (const std::wstring& token : Tokenize(context.fullName)) {
-        std::wstring normalizedToken = NormalizeForDictionary(token);
-        if (normalizedToken.size() >= 3 && normalizedPassword.find(normalizedToken) != std::wstring::npos) {
-            return true;
+    if (checkFullname) {
+        for (const std::wstring& token : Tokenize(context.fullName)) {
+            std::wstring normalizedToken = NormalizeForDictionary(token);
+            if (normalizedToken.size() >= 3 && normalizedPassword.find(normalizedToken) != std::wstring::npos) {
+                return true;
+            }
         }
     }
 
@@ -341,24 +417,26 @@ bool ContainsAccountContext(const std::wstring& normalizedPassword, const Policy
 } // namespace
 
 bool ValidatePasswordPolicy(const std::wstring& password, const PolicyContext& context) {
-    if (!HasRequiredClasses(password)) {
+    const PolicyOptions options = LoadPolicyOptions();
+
+    if (options.requireCharClasses && !HasRequiredClasses(password)) {
         return false;
     }
-    if (Has3Consecutive(password)) {
+    if (options.blockConsecutive3 && Has3Consecutive(password, options.digitWrapSequence)) {
         return false;
     }
-    if (Has3RepeatedPattern(password)) {
+    if (options.blockRepeated3 && Has3RepeatedPattern(password)) {
         return false;
     }
-    if (Has4VerticalKeyboardSequence(password)) {
+    if (options.blockVerticalKeyboard4 && Has4VerticalKeyboardSequence(password)) {
         return false;
     }
 
     std::wstring normalizedPassword = NormalizeForDictionary(password);
-    if (ContainsAnyDictionaryTerm(normalizedPassword)) {
+    if (options.enableDictionaryCheck && ContainsAnyDictionaryTerm(normalizedPassword, options.dictionaryPath)) {
         return false;
     }
-    if (ContainsAccountContext(normalizedPassword, context)) {
+    if (ContainsAccountContext(normalizedPassword, context, options.enableAccountNameCheck, options.enableFullNameCheck)) {
         return false;
     }
 
