@@ -25,7 +25,7 @@ extern "C" __declspec(dllexport) NTSTATUS __stdcall PasswordChangeNotify(
     ULONG /*RelativeId*/,
     PUNICODE_STRING /*NewPassword*/
 ) {
-    return STATUS_SUCCESS;
+    return 0;
 }
 
 extern "C" __declspec(dllexport) BOOLEAN __stdcall PasswordFilter(
