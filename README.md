@@ -103,6 +103,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 3. 运行 `password_policy_test.exe`（默认）
 4. 校验 `PassFiltEx.dll` 是否生成并输出 SHA256
 
+
+### 常见编译问题（Windows）
+
+如果你看到如下错误：
+
+- `E0020 未定义标识符 STATUS_SUCCESS`
+- `C2065 STATUS_SUCCESS: 未声明的标识符`
+
+请确认使用的是最新代码版本。当前实现已不依赖 `STATUS_SUCCESS` 宏，而是直接返回 `NTSTATUS` 成功值 `0`（等价成功语义），可避免不同 SDK 头文件组合下的宏可见性问题。
+
 ### Linux/CI (仅验证策略核心)
 
 ```bash

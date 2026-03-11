@@ -7,6 +7,8 @@
 
 namespace {
 
+constexpr NTSTATUS kNtStatusSuccess = 0;
+
 std::wstring UnicodeStringToWstring(PUNICODE_STRING str) {
     if (str == nullptr || str->Buffer == nullptr || str->Length == 0) {
         return L"";
@@ -25,7 +27,7 @@ extern "C" __declspec(dllexport) NTSTATUS __stdcall PasswordChangeNotify(
     ULONG /*RelativeId*/,
     PUNICODE_STRING /*NewPassword*/
 ) {
-    return 0;
+    return kNtStatusSuccess;
 }
 
 extern "C" __declspec(dllexport) BOOLEAN __stdcall PasswordFilter(
