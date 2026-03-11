@@ -71,6 +71,22 @@ New-ItemProperty -Path $base -Name DictionaryPath -Value 'C:\Windows\System32\Pa
 
 ---
 
+## 支持的 Windows Server 版本
+
+基于当前实现（Password Filter DLL + C++17 + VS2022 工具链），建议支持范围如下：
+
+- **推荐/已验证构建环境**：
+  - Windows Server 2019
+  - Windows Server 2022
+- **目标运行环境（AD 域控）**：
+  - Windows Server 2016（建议先灰度验证）
+  - Windows Server 2019
+  - Windows Server 2022
+
+> 说明：
+> - 该 DLL 使用的是标准 Password Filter 接口（`InitializeChangeNotify` / `PasswordFilter` / `PasswordChangeNotify`），理论上与较新的 Windows Server 版本兼容。
+> - 若你的域控仍有 2012 R2 及更早版本，不建议直接生产启用，需先在同版本测试环境做完整回归（包括密码修改、重置、复制、异常回滚）。
+
 ## 构建
 
 ### Windows (生成 DLL)
